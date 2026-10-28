@@ -1,0 +1,327 @@
+openapi: 3.1.0
+info:
+  title: ОренКод — API цифровой платформы ФСП
+  version: 0.1.0
+  description: API-прототип с Bearer-сессиями, регистрацией и серверной проверкой ролей. Часть бизнес-сценариев ещё требует интеграционного тестирования.
+servers:
+  - url: http://localhost:8081
+    description: Локальный API при запуске через Docker Compose
+paths:
+  /api/auth/register:
+    post:
+      summary: Зарегистрировать спортсмена, тренера или судью
+      description: Роль Федерации нельзя выбрать через публичную регистрацию. Успешный ответ содержит token и user.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, full_name, organization, role, consent_personal]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8 }
+                full_name: { type: string }
+                role: { type: string, enum: [athlete, coach, judge] }
+                birth_date: { type: string, format: date }
+                municipality: { type: string }
+                organization: { type: string }
+                phone: { type: string }
+                discipline: { type: string }
+                age_group: { type: string }
+                consent_personal: { type: boolean }
+                guardian_name: { type: string }
+                guardian_consent: { type: boolean }
+      responses:
+        '201': { description: Аккаунт создан и пользователь вошёл в систему }
+        '400': { description: Ошибка валидации }
+        '409': { description: Email уже зарегистрирован }
+  /api/auth/login:
+    post:
+      summary: Войти по email и паролю
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200': { description: Сессия создана; ответ содержит token и user }
+        '401': { description: Неверный email или пароль }
+  /api/auth/me:
+    get:
+      summary: Получить текущий аккаунт и назначенные роли
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Текущий пользователь }
+        '401': { description: Требуется авторизация }
+  /api/auth/switch-role:
+    post:
+      summary: Сменить активную роль
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { type: string, enum: [federation, athlete, coach, judge] }
+      responses:
+        '200': { description: Активная роль изменена }
+        '400': { description: Роль не назначена аккаунту }
+  /api/auth/logout:
+    post:
+      summary: Завершить текущую сессию
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Сессия завершена }
+  /api/athletes/{id}/approve:
+    post:
+      summary: Подтвердить профиль спортсмена
+      description: Доступно только Федерации; после подтверждения спортсмен может подавать заявки.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Профиль подтверждён }
+        '403': { description: Недостаточно прав }
+  /api/health:
+    get:
+      summary: Проверить состояние API и PostgreSQL
+      responses:
+        '200':
+          description: API и БД доступны
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  database: { type: boolean, example: true }
+                  service: { type: string, example: orenkod-api }
+        '503': { description: База данных недоступна }
+  /api/dashboard:
+    get:
+      summary: Получить данные главной панели
+      responses:
+        '200':
+          description: Сводные показатели, ближайшие соревнования и лидеры рейтинга
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stats:
+                    type: object
+                    properties:
+                      athletes: { type: integer }
+                      competitions: { type: integer }
+                      applications: { type: integer }
+                      judges: { type: integer }
+                  competitions_total: { type: integer }
+                  competitions: { type: array, items: { $ref: '#/components/schemas/Competition' } }
+                  top_athletes: { type: array, items: { $ref: '#/components/schemas/RatingEntry' } }
+  /api/competitions:
+    get:
+      summary: Получить список соревнований
+      responses:
+        '200':
+          description: Коллекция соревнований
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/Competition' } }
+    post:
+      summary: Создать черновик соревнования
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CompetitionCreate' }
+      responses:
+        '201':
+          description: Черновик создан
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Competition' }
+        '400': { description: Ошибка валидации входных данных }
+        '409': { description: Соревнование с таким названием уже существует }
+  /api/athletes:
+    get:
+      summary: Получить реестр спортсменов
+      responses:
+        '200':
+          description: Коллекция участников
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/Athlete' } }
+  /api/rating:
+    get:
+      summary: Получить рейтинг спортсменов
+      parameters:
+        - in: query
+          name: discipline
+          required: false
+          schema: { type: string }
+          description: Фильтр по точному названию дисциплины
+      responses:
+        '200':
+          description: Рейтинг по демонстрационной сумме очков
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/RatingEntry' } }
+                  calculation: { type: string }
+  /api/team:
+    get:
+      summary: Получить текущий демонстрационный состав сборной
+      responses:
+        '200':
+          description: Топ-5 рейтинга (не официальный принцип отбора)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/RatingEntry' } }
+                  basis: { type: string }
+  /api/notifications:
+    get:
+      summary: Получить демонстрационные системные уведомления
+      responses:
+        '200':
+          description: Коллекция уведомлений
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/Notification' } }
+  /api/integrations/telegram/status:
+    get:
+      summary: Проверить конфигурацию Telegram-бота
+      responses:
+        '200':
+          description: Конфигурация и состояние long polling без раскрытия токена
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  configured: { type: boolean }
+                  default_chat_configured: { type: boolean }
+                  mode: { type: string, enum: [long_polling] }
+                  polling_enabled: { type: boolean }
+  /api/integrations/telegram/link-status:
+    get:
+      summary: Проверить, связан ли текущий аккаунт с Telegram
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Статус привязки без раскрытия внешнего ID пользователя
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [linked]
+                properties:
+                  linked: { type: boolean }
+        '401': { description: Требуется авторизация }
+  /api/integrations/telegram/link-code:
+    post:
+      summary: Создать одноразовый код привязки Telegram
+      security: [{ bearerAuth: [] }]
+      responses:
+        '201':
+          description: Код действует 10 минут и может быть использован один раз
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, expires_in_seconds]
+                properties:
+                  code: { type: string, pattern: '^[0-9]{8}$' }
+                  expires_in_seconds: { type: integer, example: 600 }
+        '401': { description: Требуется авторизация }
+        '500': { description: Не удалось создать код }
+  /api/integrations/telegram/link:
+    delete:
+      summary: Отключить Telegram от текущего аккаунта
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Привязка отключена }
+        '401': { description: Требуется авторизация }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Opaque session token
+  schemas:
+    Competition:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        title: { type: string }
+        discipline: { type: string }
+        competition_type: { type: string }
+        age_group: { type: string }
+        starts_at: { type: string, format: date-time }
+        location: { type: string }
+        status: { type: string }
+        participants: { type: integer }
+    CompetitionCreate:
+      type: object
+      required: [title, discipline, starts_at]
+      properties:
+        title: { type: string, minLength: 1, example: Кубок Оренбургской области }
+        discipline: { type: string, example: Программирование }
+        competition_type: { type: string, example: Региональный }
+        age_group: { type: string, example: Юниоры }
+        starts_at: { type: string, example: '2026-11-21T10:00:00+05:00' }
+        location: { type: string, example: Оренбург }
+    Athlete:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        full_name: { type: string }
+        organization: { type: string }
+        discipline: { type: string }
+        age_group: { type: string }
+        points: { type: integer }
+        coach_name: { type: string }
+        status: { type: string }
+    RatingEntry:
+      type: object
+      properties:
+        rank: { type: integer }
+        athlete: { type: string }
+        organization: { type: string }
+        discipline: { type: string }
+        age_group: { type: string }
+        points: { type: integer }
+    Notification:
+      type: object
+      properties:
+        id: { type: integer }
+        kind: { type: string, enum: [warning, info, success] }
+        title: { type: string }
+        message: { type: string }
+        when: { type: string }
+

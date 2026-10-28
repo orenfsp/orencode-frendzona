@@ -1,0 +1,36 @@
+services:
+  # Go API. Dockerfile is in backend/Dockerfile.
+  - type: web
+    name: api
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: orenkod-db
+          property: connectionString
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_DEFAULT_CHAT_ID
+        sync: false
+
+  # React + Nginx. Nginx proxies /api requests to the "api" service.
+  - type: web
+    name: frontend
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerContext: ./frontend
+    dockerfilePath: ./frontend/Dockerfile
+    envVars: []
+
+databases:
+  - name: orenkod-db
+    plan: free
+    region: frankfurt
+    databaseName: orenkod
+    user: orenkod
